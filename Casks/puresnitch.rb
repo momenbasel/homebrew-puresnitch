@@ -2,8 +2,7 @@ cask "puresnitch" do
   version "0.1.0"
   sha256 "3be501f76646075e71b56958e68df9753bb8907901f6e56e3c6489b952c043ff"
 
-  url "https://github.com/momenbasel/puresnitch/releases/download/v#{version}/PureSnitch-#{version}.dmg",
-      verified: "github.com/momenbasel/puresnitch/"
+  url "https://github.com/momenbasel/puresnitch/releases/download/v#{version}/PureSnitch-#{version}.dmg"
   name "PureSnitch"
   desc "Open-source application firewall for macOS"
   homepage "https://github.com/momenbasel/puresnitch"
