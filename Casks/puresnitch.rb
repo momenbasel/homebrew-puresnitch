@@ -45,6 +45,24 @@ cask "puresnitch" do
   # the app artifact, so the binary is still on disk here, and by this directive
   # the daemon is already dead — the one window where that call is both possible
   # and safe. must_succeed: false so a failed teardown never blocks an uninstall.
+  #
+  # Two dependencies this rests on, recorded so a future Homebrew change reads
+  # as a known risk rather than a mystery. Both fail silently under
+  # must_succeed: false, degrading to the pre-fix behaviour — a loaded anchor —
+  # rather than to anything worse.
+  #
+  # First, the daemon is found through the deprecated bare-label `launchctl
+  # list` fallback at the end of Services::System.launchctl_find_service, not
+  # through the domain-qualified `launchctl print` sweep. domain_target only
+  # yields "system" when Process.euid is 0, and `brew uninstall` runs as a
+  # normal user — `sudo:` elevates the spawned launchctl, not Homebrew's own
+  # euid — so the system domain is never a candidate. If that fallback is ever
+  # dropped, `launchctl remove` stops firing and the helper stays alive.
+  #
+  # Second, `launchctl remove` only signals. About three seconds of `sleep 1`
+  # calls in abstract_uninstall.rb separate it from this directive, and
+  # --cleanup asserts daemon absence once. A shutdown that drains slower than
+  # that slack loses the race.
   uninstall launchctl:  "io.moamenbasel.puresnitch.helper",
             quit:       "io.moamenbasel.puresnitch",
             login_item: "PureSnitch",
