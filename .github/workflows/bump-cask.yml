@@ -138,17 +138,24 @@ jobs:
           cp -R "$GITHUB_WORKSPACE" "$TAP_DIR"
           brew trust --tap momenbasel/puresnitch
 
-          # `brew audit` checks things this job cannot repair. audit_min_os
-          # mounts the DMG and compares its LSMinimumSystemVersion against
-          # `depends_on macos:`, and the rewrite step only ever touches
-          # `version` and `sha256`. So the first release that raises the
-          # deployment target, renames the app, or changes the asset name reds
-          # this job every six hours until a person edits the cask. That is the
-          # right direction to fail in, but the run has to say so plainly
-          # instead of looking like a flake.
-          if ! { brew style momenbasel/puresnitch \
+          # Style is scoped to the cask file on purpose. `brew style <tap>` also
+          # runs actionlint and shellcheck over .github/workflows — that is how
+          # the SC2129 in this very file was caught — but inside a pre-push gate
+          # it means a lint nit in an unrelated workflow blocks every cask bump
+          # while the cask itself is fine. Tap-wide style stays in audit.yml,
+          # where blocking is the right response.
+          #
+          # `brew audit` checks two things a version+sha rewrite structurally
+          # cannot satisfy: audit_min_os mounts the DMG and compares its
+          # LSMinimumSystemVersion against `depends_on macos:`, and
+          # audit_livecheck_version compares the written version against
+          # livecheck. So the first release that raises the deployment target,
+          # renames the app, or changes the asset name reds this job every six
+          # hours until a person edits the cask. Right direction to fail in, but
+          # the run has to say so plainly instead of looking like a flake.
+          if ! { brew style "$TAP_DIR/Casks/puresnitch.rb" \
                  && brew audit --cask --online --strict momenbasel/puresnitch/puresnitch; }; then
-            echo "::error::The rewritten cask does not pass audit, so nothing was pushed. This job only rewrites version and sha256 — if upstream changed the minimum macOS version, the app name, or the DMG asset name, Casks/puresnitch.rb needs a human edit."
+            echo "::error::The rewritten cask does not pass audit, so nothing was pushed. This job only rewrites version and sha256. If upstream raised the minimum macOS version, update depends_on macos: in Casks/puresnitch.rb by hand; if it renamed the app or the DMG asset, those need editing too."
             exit 1
           fi
           brew info --cask momenbasel/puresnitch/puresnitch
