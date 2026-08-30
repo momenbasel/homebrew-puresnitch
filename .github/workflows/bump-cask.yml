@@ -1,0 +1,108 @@
+name: Bump cask
+
+# The cask went stale at v0.1.0 while upstream shipped v0.2.0
+# (momenbasel/puresnitch#4), so `brew install` handed out a build that predated
+# every fix. This job re-checks upstream on a schedule and bumps itself, which
+# means the tap self-heals even when a release is cut by hand.
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+  repository_dispatch:
+    types: [puresnitch-release]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: bump-cask
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compare the cask against the latest upstream release
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          CURRENT=$(sed -n 's/^  version "\(.*\)"$/\1/p' Casks/puresnitch.rb)
+          TAG=$(gh release view --repo momenbasel/puresnitch --json tagName --jq .tagName)
+          LATEST="${TAG#v}"
+          echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
+          echo "latest=$LATEST"   >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG"         >> "$GITHUB_OUTPUT"
+          if [ "$CURRENT" = "$LATEST" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Cask is already on $CURRENT."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Bumping $CURRENT -> $LATEST"
+          fi
+
+      - name: Download the release DMG and compute its checksum
+        if: steps.check.outputs.changed == 'true'
+        id: dmg
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.check.outputs.tag }}
+          LATEST: ${{ steps.check.outputs.latest }}
+        run: |
+          set -euo pipefail
+          ASSET="PureSnitch-${LATEST}.dmg"
+          # The checksum is always recomputed from the published asset. A
+          # repository_dispatch payload is an untrusted hint about *which*
+          # release to look at, never a source of truth for the hash.
+          gh release download "$TAG" --repo momenbasel/puresnitch --pattern "$ASSET" --dir /tmp/dmg
+          SHA=$(sha256sum "/tmp/dmg/$ASSET" | cut -d' ' -f1)
+          echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
+          echo "::notice::$ASSET sha256=$SHA"
+
+      - name: Rewrite the cask
+        if: steps.check.outputs.changed == 'true'
+        env:
+          LATEST: ${{ steps.check.outputs.latest }}
+          SHA: ${{ steps.dmg.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os, pathlib, re
+
+          version = os.environ["LATEST"]
+          sha = os.environ["SHA"]
+          if not re.fullmatch(r"[0-9]+(\.[0-9]+)*", version):
+              raise SystemExit(f"refusing to write a non-numeric version: {version!r}")
+          if not re.fullmatch(r"[0-9a-f]{64}", sha):
+              raise SystemExit(f"refusing to write a malformed sha256: {sha!r}")
+
+          path = pathlib.Path("Casks/puresnitch.rb")
+          text = path.read_text()
+          text, n_v = re.subn(r'^  version ".*"$', f'  version "{version}"', text, count=1, flags=re.M)
+          text, n_s = re.subn(r'^  sha256 ".*"$', f'  sha256 "{sha}"', text, count=1, flags=re.M)
+          if n_v != 1 or n_s != 1:
+              raise SystemExit(f"cask rewrite failed (version={n_v}, sha256={n_s})")
+          path.write_text(text)
+          PY
+          git diff -- Casks/puresnitch.rb
+
+      - name: Verify the cask still parses
+        if: steps.check.outputs.changed == 'true'
+        run: ruby -c Casks/puresnitch.rb
+
+      - name: Commit and push
+        if: steps.check.outputs.changed == 'true'
+        env:
+          CURRENT: ${{ steps.check.outputs.current }}
+          LATEST: ${{ steps.check.outputs.latest }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Casks/puresnitch.rb
+          git commit -m "puresnitch ${LATEST}" -m "Automated bump from ${CURRENT}."
+          git push

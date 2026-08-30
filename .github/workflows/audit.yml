@@ -1,0 +1,37 @@
+name: Audit cask
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: homebrew-puresnitch
+
+      - name: Install the tap from this checkout
+        run: |
+          set -euo pipefail
+          TAP_DIR="$(brew --repository)/Library/Taps/momenbasel/homebrew-puresnitch"
+          mkdir -p "$(dirname "$TAP_DIR")"
+          cp -R homebrew-puresnitch "$TAP_DIR"
+          # Homebrew 6 refuses to evaluate third-party tap code until it is
+          # trusted, which is also what users hit in momenbasel/puresnitch#6.
+          brew trust --tap momenbasel/puresnitch
+
+      - name: brew style
+        run: brew style momenbasel/puresnitch
+
+      - name: brew audit
+        run: brew audit --cask --online --strict momenbasel/puresnitch/puresnitch
+
+      - name: brew info
+        run: brew info --cask momenbasel/puresnitch/puresnitch
