@@ -37,14 +37,35 @@ jobs:
           set -euo pipefail
           CURRENT=$(sed -n 's/^  version "\(.*\)"$/\1/p' Casks/puresnitch.rb)
           TAG=$(gh release view --repo momenbasel/puresnitch --json tagName --jq .tagName)
+          LATEST="${TAG#v}"
+
+          # `case` patterns are globs, not regexes: `v[0-9]*.[0-9]*.[0-9]*`
+          # happily matches v0.3.0-beta.1 and v1.2.3rc4. Those would clear this
+          # check, download a DMG, and only then die on the stricter numeric
+          # guard in the rewrite step — an error three steps from its cause.
+          # Reject anything the rewrite step would reject, here.
           case "$TAG" in
-            v[0-9]*.[0-9]*.[0-9]*) ;;
+            v[0-9]*.[0-9]*) ;;
             *) echo "::error::refusing to act on an unexpected upstream tag: $TAG"; exit 1 ;;
           esac
-          LATEST="${TAG#v}"
+          if [ -n "$(printf '%s' "$LATEST" | tr -d '0-9.')" ]; then
+            echo "::error::upstream tag $TAG is not a plain numeric version; a human should decide what to do with it"
+            exit 1
+          fi
+
           if [ "$CURRENT" = "$LATEST" ]; then
             CHANGED=false
             echo "Cask is already on $CURRENT."
+          elif [ "$(printf '%s\n%s\n' "$CURRENT" "$LATEST" | sort -V | tail -1)" != "$LATEST" ]; then
+            # `=` alone is not an ordering check. Mark the newest release as a
+            # prerelease, or delete it, and `releases/latest` starts returning
+            # an older tag whose DMG and checksum are perfectly self-consistent,
+            # so the audit gate passes and this job pushes a downgrade. Users
+            # then `brew upgrade` onto a build with known bugs: issue #4 again,
+            # pointed the other way. Yanking a release is abnormal and a person
+            # should decide, so fail loudly rather than no-op quietly.
+            echo "::error::upstream latest ($LATEST) is older than the cask ($CURRENT); refusing to downgrade. If a release was yanked, edit Casks/puresnitch.rb by hand."
+            exit 1
           else
             CHANGED=true
             echo "::notice::Bumping $CURRENT -> $LATEST"
@@ -116,8 +137,20 @@ jobs:
           mkdir -p "$(dirname "$TAP_DIR")"
           cp -R "$GITHUB_WORKSPACE" "$TAP_DIR"
           brew trust --tap momenbasel/puresnitch
-          brew style momenbasel/puresnitch
-          brew audit --cask --online --strict momenbasel/puresnitch/puresnitch
+
+          # `brew audit` checks things this job cannot repair. audit_min_os
+          # mounts the DMG and compares its LSMinimumSystemVersion against
+          # `depends_on macos:`, and the rewrite step only ever touches
+          # `version` and `sha256`. So the first release that raises the
+          # deployment target, renames the app, or changes the asset name reds
+          # this job every six hours until a person edits the cask. That is the
+          # right direction to fail in, but the run has to say so plainly
+          # instead of looking like a flake.
+          if ! { brew style momenbasel/puresnitch \
+                 && brew audit --cask --online --strict momenbasel/puresnitch/puresnitch; }; then
+            echo "::error::The rewritten cask does not pass audit, so nothing was pushed. This job only rewrites version and sha256 — if upstream changed the minimum macOS version, the app name, or the DMG asset name, Casks/puresnitch.rb needs a human edit."
+            exit 1
+          fi
           brew info --cask momenbasel/puresnitch/puresnitch
 
       - name: Commit and push
