@@ -31,6 +31,9 @@ jobs:
         run: brew style momenbasel/puresnitch
 
       - name: brew audit
+        env:
+          # Unauthenticated GitHub API calls die on the 60/hour limit here.
+          HOMEBREW_GITHUB_API_TOKEN: ${{ github.token }}
         run: brew audit --cask --online --strict momenbasel/puresnitch/puresnitch
 
       - name: brew info

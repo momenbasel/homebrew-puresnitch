@@ -103,6 +103,12 @@ jobs:
 
       - name: Audit the rewritten cask before pushing it
         if: steps.check.outputs.changed == 'true'
+        env:
+          # Without this, `brew audit --online` uses unauthenticated GitHub API
+          # calls and dies on the 60/hour limit. A gate that fails for reasons
+          # unrelated to the cask silently blocks every bump, which is the exact
+          # failure this whole job exists to prevent.
+          HOMEBREW_GITHUB_API_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           TAP_DIR="$(brew --repository)/Library/Taps/momenbasel/homebrew-puresnitch"
