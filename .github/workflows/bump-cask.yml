@@ -4,6 +4,10 @@ name: Bump cask
 # (momenbasel/puresnitch#4), so `brew install` handed out a build that predated
 # every fix. This job re-checks upstream on a schedule and bumps itself, which
 # means the tap self-heals even when a release is cut by hand.
+#
+# Runs on macOS and audits before pushing, because a push authored by
+# GITHUB_TOKEN does not trigger workflow runs: audit.yml would never see an
+# automated bump, so the gate has to live inside this job.
 
 on:
   schedule:
@@ -21,7 +25,7 @@ concurrency:
 
 jobs:
   bump:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -33,6 +37,10 @@ jobs:
           set -euo pipefail
           CURRENT=$(sed -n 's/^  version "\(.*\)"$/\1/p' Casks/puresnitch.rb)
           TAG=$(gh release view --repo momenbasel/puresnitch --json tagName --jq .tagName)
+          case "$TAG" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "::error::refusing to act on an unexpected upstream tag: $TAG"; exit 1 ;;
+          esac
           LATEST="${TAG#v}"
           if [ "$CURRENT" = "$LATEST" ]; then
             CHANGED=false
@@ -62,7 +70,7 @@ jobs:
           # repository_dispatch payload is an untrusted hint about *which*
           # release to look at, never a source of truth for the hash.
           gh release download "$TAG" --repo momenbasel/puresnitch --pattern "$ASSET" --dir /tmp/dmg
-          SHA=$(sha256sum "/tmp/dmg/$ASSET" | cut -d' ' -f1)
+          SHA=$(shasum -a 256 "/tmp/dmg/$ASSET" | cut -d' ' -f1)
           echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
           echo "::notice::$ASSET sha256=$SHA"
 
@@ -93,9 +101,18 @@ jobs:
           PY
           git diff -- Casks/puresnitch.rb
 
-      - name: Verify the cask still parses
+      - name: Audit the rewritten cask before pushing it
         if: steps.check.outputs.changed == 'true'
-        run: ruby -c Casks/puresnitch.rb
+        run: |
+          set -euo pipefail
+          TAP_DIR="$(brew --repository)/Library/Taps/momenbasel/homebrew-puresnitch"
+          rm -rf "$TAP_DIR"
+          mkdir -p "$(dirname "$TAP_DIR")"
+          cp -R "$GITHUB_WORKSPACE" "$TAP_DIR"
+          brew trust --tap momenbasel/puresnitch
+          brew style momenbasel/puresnitch
+          brew audit --cask --online --strict momenbasel/puresnitch/puresnitch
+          brew info --cask momenbasel/puresnitch/puresnitch
 
       - name: Commit and push
         if: steps.check.outputs.changed == 'true'
@@ -107,5 +124,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add Casks/puresnitch.rb
-          git commit -m "puresnitch ${LATEST}" -m "Automated bump from ${CURRENT}."
+          git commit -m "puresnitch ${LATEST}" -m "Automated bump from ${CURRENT}. Audited before push."
           git push
