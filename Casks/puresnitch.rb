@@ -1,6 +1,6 @@
 cask "puresnitch" do
-  version "0.2.1"
-  sha256 "e7ad873e58b8a97f82a9bcf0e1aab16b1183b2d7afd91dcf6bb48ae42da4c03f"
+  version "0.2.2"
+  sha256 "d9c54cd151c62f1a4fb940ed775efde6f3c55d295af003e452c1047dbd7dc730"
 
   url "https://github.com/momenbasel/puresnitch/releases/download/v#{version}/PureSnitch-#{version}.dmg"
   name "PureSnitch"
